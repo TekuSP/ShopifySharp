@@ -1,3 +1,4 @@
+using System;
 using ShopifySharp.Filters;
 using ShopifySharp.Infrastructure;
 using ShopifySharp.Lists;
@@ -5,12 +6,14 @@ using System.Net.Http;
 using System.Threading.Tasks;
 using System.Threading;
 using ShopifySharp.Utilities;
+using ShopifySharp.Credentials;
 
 namespace ShopifySharp;
 
 /// <summary>
 /// A service for manipulating Shopify Product which is available to your sales channel
 /// </summary>
+[Obsolete("Shopify has deprecated the REST API for product listings. This service is deprecated and will be removed in a future version of ShopifySharp. Use ShopifySharp's GraphService to manage product listings via the GraphQL API, and check https://github.com/nozzlegear/shopifysharp for a migration guide.")]
 public class ProductListingService: ShopifyService, IProductListingService
 {
     /// <summary>
@@ -19,6 +22,9 @@ public class ProductListingService: ShopifyService, IProductListingService
     /// <param name="myShopifyUrl">The shop's *.myshopify.com URL.</param>
     /// <param name="shopAccessToken">An API access token for the shop.</param>
     public ProductListingService(string myShopifyUrl, string shopAccessToken) : base(myShopifyUrl, shopAccessToken) { }
+    #nullable enable
+    internal ProductListingService(ShopifyApiCredentials shopifyApiCredentials, IShopifyDomainUtility? shopifyDomainUtility = null) : base(shopifyApiCredentials, shopifyDomainUtility) {}
+    #nullable restore
     internal ProductListingService(string shopDomain, string accessToken, IShopifyDomainUtility shopifyDomainUtility) : base(shopDomain, accessToken, shopifyDomainUtility) {}
  
     /// <inheritdoc />

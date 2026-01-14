@@ -3,10 +3,13 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Net.Http;
+using System.Text.Json;
+using System.Threading;
 using System.Threading.Tasks;
-using Newtonsoft.Json.Linq;
+using ShopifySharp.Entities;
 using ShopifySharp.Enums;
 using ShopifySharp.Infrastructure;
+using ShopifySharp.Infrastructure.Serialization.Json;
 
 namespace ShopifySharp.Utilities;
 
@@ -21,6 +24,10 @@ public interface IShopifyOauthUtility
     /// <param name="redirectUrl">URL to redirect the user to after integration.</param>
     /// <param name="state">An optional, random string value provided by your application which is unique for each authorization request. During the OAuth callback phase, your application should check that this value matches the one you provided to this method.</param>
     /// <param name="grants">Requested grant types, which will change the type of access token granted upon OAuth completion.</param>
+    /// <remarks>
+    /// Use the <see cref="BuildAuthorizationUrl(AuthorizationUrlOptions)"/> overload instead.
+    /// </remarks>
+    [Obsolete("Use " + nameof(BuildAuthorizationUrl) + "(" + nameof(AuthorizationUrlOptions) + ") instead. This method will be removed in a future version of ShopifySharp.")]
     Uri BuildAuthorizationUrl(
         IEnumerable<AuthorizationScope> scopes,
         string shopDomain,
@@ -39,6 +46,7 @@ public interface IShopifyOauthUtility
     /// <param name="redirectUrl">URL to redirect the user to after integration.</param>
     /// <param name="state">An optional, random string value provided by your application which is unique for each authorization request. During the OAuth callback phase, your application should check that this value matches the one you provided to this method.</param>
     /// <param name="grants">Requested grant types, which will change the type of access token granted upon OAuth completion.</param>
+    [Obsolete("Use " + nameof(BuildAuthorizationUrl) + "(" + nameof(AuthorizationUrlOptions) + ") instead. This method will be removed in a future version of ShopifySharp.")]
     Uri BuildAuthorizationUrl(
         IEnumerable<string> scopes,
         string shopDomain,
@@ -48,13 +56,11 @@ public interface IShopifyOauthUtility
         IEnumerable<string>? grants = null
     );
 
-    #if NET8_0_OR_GREATER
     /// <summary>
     /// Builds an OAuth authorization URL for Shopify OAuth integration.
     /// </summary>
     /// <param name="options">Options for building the OAuth URL.</param>
     Uri BuildAuthorizationUrl(AuthorizationUrlOptions options);
-    #endif
 
     /// <summary>
     /// Authorizes an application installation, generating an access token for the given shop.
@@ -70,13 +76,11 @@ public interface IShopifyOauthUtility
         string clientSecret
     );
 
-    #if NET8_0_OR_GREATER
     /// <summary>
     /// Authorizes an application installation, generating an access token for the given shop.
     /// </summary>
     /// <param name="options">Options for performing the authorization.</param>
     Task<AuthorizationResult> AuthorizeAsync(AuthorizeOptions options);
-    #endif
 
     /// <summary>
     /// Refreshes an existing store access token using the app's client secret and a refresh token
@@ -95,66 +99,53 @@ public interface IShopifyOauthUtility
         string existingStoreAccessToken
     );
 
-    #if NET8_0_OR_GREATER
     /// <summary>
     /// Refreshes an existing store access token using the app's client secret and a refresh token
     /// For more info on rotating tokens, see https://shopify.dev/apps/auth/oauth/rotate-revoke-client-credentials
     /// </summary>
     /// <param name="options">Options for refreshing the access token.</param>
     Task<AuthorizationResult> RefreshAccessTokenAsync(RefreshAccessTokenOptions options);
-    #endif
 }
 
-#if NET8_0_OR_GREATER
-public record AuthorizationUrlOptions
+public class ShopifyOauthUtility: IShopifyOauthUtility
 {
-    /// An array of Shopify permission strings, e.g. 'read_orders' or 'write_script_tags'. These are the permissions that your app needs to run.
-    public required IEnumerable<string> Scopes { get; init; }
-    /// The shop's *.myshopify.com URL.
-    public required string ShopDomain { get; init; }
-    /// Your app's public Client ID, also known as its public API key.
-    public required string ClientId { get; init; }
-    /// URL to redirect the user to after integration.
-    public required string RedirectUrl { get; init; }
-    /// An optional, random string value provided by your application which is unique for each authorization request. During the OAuth callback phase, your application should check that this value matches the one you provided to this method.
-    public string? State { get; init; }
-    /// Requested grant types, which will change the type of access token granted upon OAuth completion.
-    public IEnumerable<string>? Grants { get; init; }
-}
+    private const string AccessTokenPropertyName = "access_token";
+    private const string ExpiresInPropertyName = "expires_in";
+    private const string AssociatedUserPropertyName = "associated_user";
+    private const string AssociatedUserScopePropertyName = "associated_user_scope";
+    private const string ScopePropertyName = "scope";
 
-public record AuthorizeOptions
-{
-    /// The authorization code generated by Shopify, which is attached to the redirect querystring when Shopify redirects the user back to your app.
-    public required string Code { get; init; }
-    /// The store's *.myshopify.com URL, which is attached as a parameter named <c>shop</c> on the redirect querystring.
-    public required string ShopDomain { get; init; }
-    /// Your app's public Client ID, also known as its public API key.
-    public required string ClientId { get; init; }
-    /// Your app's Client Secret, also known as its secret API key.
-    public required string ClientSecret { get; init; }
-}
+    private readonly IHttpClientFactory _httpClientFactory;
+    private readonly IShopifyDomainUtility _domainUtility;
+    private readonly IJsonSerializer _jsonSerializer;
 
-public record RefreshAccessTokenOptions
-{
-    /// The store's *.myshopify.com url
-    public required string ShopDomain { get; init; }
-    /// Your app's public Client ID, also known as its public API key.
-    public required string ClientId { get; init; }
-    /// Your app's Client Secret, also known as its secret API key.
-    public required string ClientSecret { get; init; }
-    /// The app's refresh token
-    public required string RefreshToken { get; init; }
-    /// The existing store access token
-    public required string ExistingStoreAccessToken { get; init; }
-}
-#endif
+    public ShopifyOauthUtility(IShopifyDomainUtility? domainUtility = null)
+    {
+        (_domainUtility, _httpClientFactory, _jsonSerializer) = InitializeDependencies(null, domainUtility);
+    }
 
-public class ShopifyOauthUtility(IShopifyDomainUtility? domainUtility = null) : IShopifyOauthUtility
-{
-    private readonly IHttpClientFactory _httpClientFactory = new InternalHttpClientFactory();
-    private readonly IShopifyDomainUtility _domainUtility = domainUtility ?? new ShopifyDomainUtility();
+    internal ShopifyOauthUtility(IServiceProvider serviceProvider)
+    {
+        (_domainUtility, _httpClientFactory, _jsonSerializer) = InitializeDependencies(serviceProvider, null);
+    }
+
+    private static (IShopifyDomainUtility, IHttpClientFactory, IJsonSerializer) InitializeDependencies(IServiceProvider? serviceProvider, IShopifyDomainUtility? shopifyDomainUtility)
+    {
+        var domainUtility = InternalServiceResolver.GetServiceOrDefault(
+            serviceProvider, () => shopifyDomainUtility ?? new ShopifyDomainUtility());
+        var httpClientFactory = InternalServiceResolver.GetServiceOrDefault<IHttpClientFactory>(
+            serviceProvider, () => new InternalHttpClientFactory());
+        var jsonSerializer = InternalServiceResolver.GetServiceOrDefault<IJsonSerializer>(
+            serviceProvider, () => new SystemJsonSerializer(GetJsonSerializerOptions()));
+
+        return (domainUtility, httpClientFactory, jsonSerializer);
+
+        JsonSerializerOptions GetJsonSerializerOptions() => InternalServiceResolver.GetServiceOrDefault(
+            serviceProvider, () => Serializer.RestSerializerOptions);
+    }
 
     /// <inheritdoc />
+    [Obsolete("Use " + nameof(BuildAuthorizationUrl) + "(" + nameof(AuthorizationUrlOptions) + ") instead. This method will be removed in a future version of ShopifySharp.")]
     public Uri BuildAuthorizationUrl(
         IEnumerable<AuthorizationScope> scopes,
         string shopDomain,
@@ -162,12 +153,20 @@ public class ShopifyOauthUtility(IShopifyDomainUtility? domainUtility = null) : 
         string redirectUrl,
         string? state = null,
         IEnumerable<string>? grants = null
-    )
+    ) => BuildAuthorizationUrl(new AuthorizationUrlOptions
     {
-        return BuildAuthorizationUrl(scopes.Select(s => s.ToSerializedString()), shopDomain, clientId, redirectUrl, state, grants);
-    }
+        Scopes = scopes.Select(s => s.ToSerializedString()),
+        ShopDomain = shopDomain,
+        ClientId = clientId,
+        RedirectUrl = redirectUrl,
+        State = state,
+#pragma warning disable CS0618 // Type or member is obsolete
+        Grants = grants,
+#pragma warning restore CS0618 // Type or member is obsolete
+    });
 
     /// <inheritdoc />
+    [Obsolete("Use " + nameof(BuildAuthorizationUrl) + "(" + nameof(AuthorizationUrlOptions) + ") instead. This method will be removed in a future version of ShopifySharp.")]
     public Uri BuildAuthorizationUrl(
         IEnumerable<string> scopes,
         string shopDomain,
@@ -175,48 +174,61 @@ public class ShopifyOauthUtility(IShopifyDomainUtility? domainUtility = null) : 
         string redirectUrl,
         string? state = null,
         IEnumerable<string>? grants = null
-    )
+    ) => BuildAuthorizationUrl(new AuthorizationUrlOptions
     {
-        grants = grants?.ToList();
-        //Prepare a uri builder for the shop URL
-        var builder = new UriBuilder(_domainUtility.BuildShopDomainUri(shopDomain));
+        Scopes = scopes,
+        ShopDomain = shopDomain,
+        ClientId = clientId,
+        RedirectUrl = redirectUrl,
+        State = state,
+#pragma warning disable CS0618 // Type or member is obsolete
+        Grants = grants,
+#pragma warning restore CS0618 // Type or member is obsolete
+    });
 
-        //Build the querystring
-        var qs = new List<KeyValuePair<string, string>>()
+    /// <inheritdoc />
+    public Uri BuildAuthorizationUrl(AuthorizationUrlOptions options)
+    {
+        var builder = new UriBuilder(_domainUtility.BuildShopDomainUri(options.ShopDomain));
+        var qs = new List<(string, string)>
         {
-            new("client_id", clientId),
-            new("scope", string.Join(",", scopes)),
-            new("redirect_uri", redirectUrl),
+            ("client_id", options.ClientId),
+            ("scope", string.Join(",", options.Scopes)),
+            ("redirect_uri", options.RedirectUrl),
         };
 
-        if (!string.IsNullOrEmpty(state))
-        {
-            qs.Add(new KeyValuePair<string, string>("state", state));
-        }
+        if (!string.IsNullOrEmpty(options.State))
+            qs.Add(("state", options.State!));
 
-        if (grants?.Any() == true)
+        if (options.AuthorizationAccessMode == AuthorizationAccessMode.Online)
         {
-            qs.AddRange(grants.Select(grant => new KeyValuePair<string, string>("grant_options[]", grant)));
+            // To use the online access mode, set the grant_options[] value to per-user
+            qs.Add(("grant_options[]", "per-user"));
+
+#pragma warning disable CS0618 // Type or member is obsolete
+            if (options.Grants?.Any() == true)
+                throw new ArgumentException($"Invalid {nameof(AuthorizationUrlOptions)}. Cannot use the obsolete {nameof(options.Grants)} alongside {nameof(options.AuthorizationAccessMode)}.");
+        }
+        else if (options.Grants?.ToList() is { Count: >= 1 } grants)
+#pragma warning restore CS0618 // Type or member is obsolete
+        {
+            qs.AddRange(grants.Select(grant => ("grant_options[]", grant)));
         }
 
         builder.Path = "admin/oauth/authorize";
-        builder.Query = string.Join("&", qs.Select(s => $"{s.Key}={s.Value}"));
+        builder.Query = string.Join("&", qs.Select(pairs => $"{pairs.Item1}={pairs.Item2}"));
 
         return builder.Uri;
     }
 
-    #if NET8_0_OR_GREATER
     /// <inheritdoc />
-    public Uri BuildAuthorizationUrl(AuthorizationUrlOptions options) =>
-        BuildAuthorizationUrl(
-            options.Scopes,
+    public Task<AuthorizationResult> AuthorizeAsync(AuthorizeOptions options) =>
+        AuthorizeAsync(
+            options.Code,
             options.ShopDomain,
             options.ClientId,
-            options.RedirectUrl,
-            options.State,
-            options.Grants
+            options.ClientSecret
         );
-    #endif
 
     /// <inheritdoc />
     public async Task<AuthorizationResult> AuthorizeAsync(
@@ -230,34 +242,110 @@ public class ShopifyOauthUtility(IShopifyDomainUtility? domainUtility = null) : 
         {
             Path = "admin/oauth/access_token"
         };
-        var content = new JsonContent(new
-        {
-            client_id = clientId,
-            client_secret = clientSecret,
-            code,
-        });
-
-        var client = _httpClientFactory.CreateClient();
+        using var content = new JsonContent(new { client_id = clientId, client_secret = clientSecret, code });
         using var request = new CloneableRequestMessage(ub.Uri, HttpMethod.Post, content);
-        using var response = await client.SendAsync(request);
-        var rawDataString = await response.Content.ReadAsStringAsync();
 
-        ShopifyService.CheckResponseExceptions(await request.GetRequestInfo(), response, rawDataString);
-
-        var json = JToken.Parse(rawDataString);
-        return new AuthorizationResult(json.Value<string>("access_token"), json.Value<string>("scope")?.Split(','));
+        return await SendRequestAndParseAuthorizationResultAsync(request);
     }
 
-    #if NET8_0_OR_GREATER
+    private async Task<AuthorizationResult> SendRequestAndParseAuthorizationResultAsync(CloneableRequestMessage requestMessage)
+    {
+        var client = _httpClientFactory.CreateClient(nameof(ShopifyOauthUtility));
+        using var response = await client.SendAsync(requestMessage, CancellationToken.None);
+        var json = await response.Content.ReadAsStringAsync();
+
+        ShopifyService.CheckResponseExceptions(await requestMessage.GetRequestInfo(), response, json);
+
+        var jsonEl = _jsonSerializer.Parse(json);
+        var accessToken = await ReadAccessTokenAsync(jsonEl);
+
+        OnlineAccessInfo? onlineAccessInfo = null;
+
+        if (jsonEl.TryGetProperty(AssociatedUserPropertyName, out var user) && user.ValueType != JsonValueType.Null)
+        {
+            if (user.ValueType != JsonValueType.Object)
+                throw new ShopifyJsonParseException(
+                    $"The JSON response from Shopify does not contain a valid '{AssociatedUserPropertyName}' property. The property type was {user.ValueType}, which is invalid.",
+                    AssociatedUserPropertyName
+                );
+
+            var expiresInElem = GetRequiredProperty(jsonEl, ExpiresInPropertyName, JsonValueType.Number);
+            var expiresInSec = await _jsonSerializer.DeserializeAsync<int>(expiresInElem);
+            var userScopes = await ReadScopesToArrayAsync(jsonEl, AssociatedUserScopePropertyName);
+            var associatedUser = await _jsonSerializer.DeserializeAsync<AssociatedUser>(user);
+
+            onlineAccessInfo = new OnlineAccessInfo
+            {
+                ExpiresIn = TimeSpan.FromSeconds(expiresInSec),
+                AssociatedUserScopes = userScopes,
+                AssociatedUser = associatedUser!
+            };
+        }
+
+        var scopes = await ReadScopesToArrayAsync(jsonEl, ScopePropertyName);
+        return new AuthorizationResult(accessToken, scopes)
+        {
+            OnlineAccess = onlineAccessInfo
+        };
+    }
+
+    private static IJsonElement GetRequiredProperty(IJsonElement json, string propertyName, JsonValueType expectedType)
+    {
+        if (!json.TryGetProperty(propertyName, out var property) || property.ValueType == JsonValueType.Null)
+            throw new ShopifyJsonParseException(
+                $"The JSON response from Shopify does not contain a valid '{propertyName}' property. The property was null or missing.",
+                propertyName
+            );
+        if (property.ValueType != expectedType)
+            throw new ShopifyJsonParseException(
+                $"The JSON response from Shopify does not contain a valid '{propertyName}' property. The property type was {property.ValueType}, which is invalid.",
+                propertyName
+            );
+        return property;
+    }
+
+    private async ValueTask<string> ReadAccessTokenAsync(IJsonElement json)
+    {
+        var accessTokenStr = await _jsonSerializer.DeserializeAsync<string>(GetRequiredProperty(json, AccessTokenPropertyName, JsonValueType.String));
+
+        if (accessTokenStr is null || string.IsNullOrWhiteSpace(accessTokenStr))
+            throw new ShopifyJsonParseException(
+                $"The JSON response from Shopify does not contain a valid '{AccessTokenPropertyName}' property. The property was null or empty.",
+                AccessTokenPropertyName
+            );
+
+        return accessTokenStr;
+    }
+
+    private async ValueTask<string[]> ReadScopesToArrayAsync(IJsonElement json, string propertyName)
+    {
+        if (!json.TryGetProperty(propertyName, out var scopesElement) || scopesElement.ValueType == JsonValueType.Null)
+            return [];
+
+        if (scopesElement.ValueType != JsonValueType.String)
+            throw new ShopifyJsonParseException(
+                $"The JSON response from Shopify does not contain a valid '{propertyName}' property. The property type was {scopesElement.ValueType}, which is invalid.",
+                propertyName
+            );
+
+        var value = await _jsonSerializer.DeserializeAsync<string>(scopesElement);
+        return value?
+            .Trim()
+            .Split(',')
+            .Select(s => s.Trim())
+            .Where(s => s.Length > 0)
+            .ToArray() ?? [];
+    }
+
     /// <inheritdoc />
-    public Task<AuthorizationResult> AuthorizeAsync(AuthorizeOptions options) =>
-        AuthorizeAsync(
-            options.Code,
+    public Task<AuthorizationResult> RefreshAccessTokenAsync(RefreshAccessTokenOptions options) =>
+        RefreshAccessTokenAsync(
             options.ShopDomain,
             options.ClientId,
-            options.ClientSecret
+            options.ClientSecret,
+            options.RefreshToken,
+            options.ExistingStoreAccessToken
         );
-    #endif
 
     /// <inheritdoc />
     public async Task<AuthorizationResult> RefreshAccessTokenAsync(
@@ -272,35 +360,15 @@ public class ShopifyOauthUtility(IShopifyDomainUtility? domainUtility = null) : 
         {
             Path = "admin/oauth/access_token"
         };
-        var content = new JsonContent(new
+        using var content = new JsonContent(new
         {
             client_id = clientId,
             client_secret = clientSecret,
             refresh_token = refreshToken,
             access_token = existingStoreAccessToken
         });
-
-        var client = _httpClientFactory.CreateClient();
         using var request = new CloneableRequestMessage(ub.Uri, HttpMethod.Post, content);
-        using var response = await client.SendAsync(request);
-        var rawDataString = await response.Content.ReadAsStringAsync();
 
-        ShopifyService.CheckResponseExceptions(await request.GetRequestInfo(), response, rawDataString);
-
-        var json = JToken.Parse(rawDataString);
-        // TODO: throw a ShopifyJsonParseException if value is null. Exception should have a RawBody property.
-        return new AuthorizationResult(json.Value<string>("access_token"), json.Value<string>("scope")?.Split(','));
+        return await SendRequestAndParseAuthorizationResultAsync(request);
     }
-
-    #if NET8_0_OR_GREATER
-    /// <inheritdoc />
-    public Task<AuthorizationResult> RefreshAccessTokenAsync(RefreshAccessTokenOptions options) =>
-        RefreshAccessTokenAsync(
-            options.ShopDomain,
-            options.ClientId,
-            options.ClientSecret,
-            options.RefreshToken,
-            options.ExistingStoreAccessToken
-        );
-#endif
 }
